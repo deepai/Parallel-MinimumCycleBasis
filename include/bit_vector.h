@@ -2,6 +2,8 @@
 #define _H_BIT_VECTOR
 
 #include <stack>
+#include <omp.h>
+#include <cstring>
 
 class bit_vector
 {
@@ -18,11 +20,25 @@ public:
 		num_elements = n;
 		size = (int)(ceil((double)n/64));
 		elements = new unsigned long long[size];
-		for(int i=0;i<size;i++)
-			elements[i] = 0;
+		memset(elements,0,sizeof(unsigned long long) * size);
 	}
 
-	inline unsigned long long get_xor_number(int &offset,bool &val)
+	~bit_vector()
+	{
+		delete[] elements;
+	}
+
+	int get_size()
+	{
+		return size;
+	}
+
+	int get_num_elements()
+	{
+		return num_elements;
+	}
+
+	inline unsigned long long get_or_number(int &offset,bool &val)
 	{
 		unsigned long long initial_value = val;
 		if(val == false)
@@ -48,6 +64,7 @@ public:
 		return result;
 	}
 
+	//Return the actual index of the element containing the offset.
 	inline unsigned long long &get_element_for_pos(int &pos)
 	{
 		int index = pos/64;
@@ -61,13 +78,13 @@ public:
 		int count = 64;
 
 		while (val || (count >0)) {
-	    	if (val & 1)
-	        	bits.push(1);
-	    	else
-	        	bits.push(0);
+		    	if (val & 1)
+		        	bits.push(1);
+		    	else
+		        	bits.push(0);
 
-	    	val >>= 1;
-	    	count--;
+		    	val >>= 1;
+		    	count--;
 		}
 
 		while(!bits.empty())
@@ -82,14 +99,16 @@ public:
 		unsigned long long &item = get_element_for_pos(pos);
 		int offset = pos%64;
 
-		unsigned long long xor_number = get_xor_number(offset,val);
+		unsigned long long or_number = get_or_number(offset,val);
 
-		item = item^xor_number;
+		item = item | or_number;
 	}
 
 	void do_xor(bit_vector *vector)
 	{
 		assert(vector->size == size);
+
+		#pragma omp parallel for
 		for(int i=0;i<size;i++)
 			elements[i] = elements[i]^vector->elements[i];
 	}
@@ -116,6 +135,7 @@ public:
 		printf("\n");
 	}
 
+	//get bit value at the position pos such that pos belongs to [0- num_elements - 1]
 	inline unsigned get_bit(int pos)
 	{
 		unsigned long long &item = get_element_for_pos(pos);

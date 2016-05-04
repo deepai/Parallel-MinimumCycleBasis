@@ -6,23 +6,33 @@
 #include "cycles.h"
 #include "Dijkstra.h"
 #include "bit_vector.h"
+#include "cycle_searcher.h"
 
+#include <utility>
 #include <unordered_map>
+#include <assert.h>
 
 
 struct worker_thread
 {
 	std::vector<csr_tree*> shortest_path_trees;
-	std::vector<cycle*> list_cycles;
 	dijkstra *helper;
+	cycle_storage *storage;
 
-	worker_thread(csr_multi_graph *graph)
+	worker_thread(csr_multi_graph *graph,cycle_storage *s)
 	{
 		helper = new dijkstra(graph->Nodes,graph);
+		storage = s;
+	}
+
+	~worker_thread()
+	{
+		shortest_path_trees.clear();
+		delete helper;
 	}
 
 
-	void produce_sp_tree_and_cycles(int src,csr_multi_graph *graph)
+	int produce_sp_tree_and_cycles(int src,csr_multi_graph *graph)
 	{
 		helper->reset();
 
@@ -32,35 +42,53 @@ struct worker_thread
 		sp_tree->obtain_shortest_path_tree(*helper,true,src);
 		shortest_path_trees.push_back(sp_tree);
 
+		//compute s values for each tree.
+		sp_tree->compute_s_values(helper->parent);
+
 		//compute the cycles;
 		std::vector<unsigned> *non_tree_edges = sp_tree->non_tree_edges;
 
-		int total_weight;
-		bool is_edge_cycle;
+		int total_weight,temp_weight;
+		bool is_edge_cycle,temp_check;
+
+		int count_cycle = 0;
 
 		for(int i=0;i<non_tree_edges->size();i++)
 		{
+			total_weight = 0;
+			
 			is_edge_cycle = helper->is_edge_cycle(non_tree_edges->at(i),total_weight,src);
 
 			if(is_edge_cycle)
 			{
 				cycle *cle = new cycle(sp_tree,non_tree_edges->at(i));
+
 				cle->total_length = total_weight;
-				list_cycles.push_back(cle);
+				
+				storage->add_cycle(src,helper->graph->rows->at(non_tree_edges->at(i)),
+					helper->graph->columns->at(non_tree_edges->at(i)),cle);
+
+				count_cycle++;
 			}
 		}
 
 		sp_tree->remove_non_tree_edges();
 		sp_tree->node_pre_compute = new std::vector<unsigned>(graph->Nodes);
+
+		return count_cycle;
+
 	}
 
 	void empty_cycles()
 	{
-		list_cycles.clear();
+		storage->clear_cycles();
 	}
 
-	void precompute_supportVec(std::unordered_map<unsigned,unsigned> &non_tree_edge_map,bit_vector &vector)
+	void precompute_supportVec(std::vector<std::pair<bool,int>> &non_tree_edges,bit_vector &vector)
 	{
+		//assert(non_tree_edge_map.size() == vector.get_num_elements());
+		//assert(vector.get_size() == (int)(ceil((double)non_tree_edge_map.size()/64)));
+
 		for(int i=0;i<shortest_path_trees.size();i++)
 		{
 			csr_tree *current_tree = shortest_path_trees.at(i);
@@ -76,19 +104,16 @@ struct worker_thread
 			for(int i=0;i<tree_edges->size();i++)
 			{
 				edge_offset = tree_edges->at(i);
-				reverse_edge = graph->reverse_edge->at(edge_offset);
+				
 				row = graph->rows->at(edge_offset);
 				column = graph->columns->at(edge_offset);
 
+				std::pair<bool,int> &edge = non_tree_edges[edge_offset];
+
 				//non_tree_edge
-				if(non_tree_edge_map.find(edge_offset) != non_tree_edge_map.end())
+				if(edge.first)
 				{
-					bit = vector.get_bit(non_tree_edge_map.at(edge_offset));
-					precompute_nodes->at(column) = (precompute_nodes->at(row) + bit)%2;
-				}
-				else if(non_tree_edge_map.find(reverse_edge) != non_tree_edge_map.end())
-				{
-					bit = vector.get_bit(non_tree_edge_map.at(reverse_edge));
+					bit = vector.get_bit(edge.second);
 					precompute_nodes->at(column) = (precompute_nodes->at(row) + bit)%2;
 				}
 				else //tree edge

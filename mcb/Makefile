@@ -4,13 +4,15 @@ SRCDIR=src
 
 EX_INCLUDE = ../include
 
-DFLAGS = -DMULTI_THREAD -DPRINT -DVERBOSE
+DFLAGS = -DMULTI_THREAD -DNDEBUG
+#-DPRINT -DVERBOSE
 
 CC=g++
-CFLAGS=-I$(IDIR) -I$(EX_INCLUDE) -fopenmp -lgomp $(DFLAGS) -g -w -std=c++11 -fpermissive
-CXXFLAGS = -I$(IDIR) -I$(EX_INCLUDE) -fopenmp -lgomp $(DFLAGS) -g -w -std=c++11 -fpermissive
+CFLAGS=-I$(IDIR) -I$(EX_INCLUDE) -fopenmp -lgomp $(DFLAGS) -w -std=c++11 -fpermissive
+CXXFLAGS = -I$(IDIR) -I$(EX_INCLUDE) -fopenmp -lgomp $(DFLAGS) -w -std=c++11 -fpermissive
 
-
+#CFLAGS=-I$(IDIR) -I$(EX_INCLUDE) -fopenmp -lgomp $(DFLAGS) -g -w -std=c++11 -fpermissive
+#CXXFLAGS = -I$(IDIR) -I$(EX_INCLUDE) -fopenmp -lgomp $(DFLAGS) -g -w -std=c++11 -fpermissive
 
 #-DMULTI_THREAD for multi-thread support
 #-DPRINT to print the bccs in a file
@@ -23,11 +25,11 @@ DEPS = $(patsubst %,$(EX_INCLUDE)/%,$(_DEPS))
 _EXTRA_DEPS = mmio.o Host_Timer.o CsrGraphSpanningTree.o CsrGraphDegreeTwoRemoval.o CsrGraphMultiSpanningTree.o
 EXTRA_DEPS = $(patsubst %,$(EX_INCLUDE)/%,$(_EXTRA_DEPS))
 
-OBJ = mcb_cycle.o
+OBJ2 = mcb_cycle.o
 
 all: mcb_cycle Test
 
-mcb_cycle: $(OBJ) $(EXTRA_DEPS)
+mcb_cycle: $(OBJ2) $(EXTRA_DEPS)
 	$(CC) -o $@ $^ $(CFLAGS) $(LIBS) $(DFLAGS)
 
 mcb_cycle.o: mcb_cycle.cpp $(DEPS)

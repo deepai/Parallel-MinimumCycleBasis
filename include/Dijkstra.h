@@ -21,7 +21,7 @@ struct dijkstra
 	{
 		bool operator()(std::pair<int,int> &a,std::pair<int,int> &b)
 		{
-			return (a.second < b.second);
+			return (a.second > b.second);
 		}
 	};
 	std::priority_queue<std::pair<int,int>,std::vector<std::pair<int,int>>,Compare> pq; 
@@ -45,6 +45,7 @@ struct dijkstra
 		in_tree.clear();
 		parent.clear();
 		level.clear();
+		edge_offsets.clear();
 	}
 
 
@@ -131,15 +132,20 @@ struct dijkstra
 			if(is_tree_edge[i] == 1)
 				continue;
 			else if(is_tree_edge[graph->reverse_edge->at(i)] == 1)
+			{
+				is_tree_edge[i] = 1;
 				continue;
+			}
 			else if(is_tree_edge[graph->reverse_edge->at(i)] == 2)
+			{
+				is_tree_edge[i] = 2;
 				continue;
+			}
 			else
 			{
 				is_tree_edge[i] = 2;
 				(*non_tree_edges)->push_back(i);
 			}
-
 		}
 	}
 
@@ -151,18 +157,30 @@ struct dijkstra
 		orig_row = row = graph->rows->at(edge_offset);
 		orig_col = col = graph->columns->at(edge_offset);
 
+		if(!(src <= row && src <= col))
+			return false;
+
 		while(level[row] != level[col])
 		{
 			if(level[row] < level[col])
 				col = parent[col];
 			else
 				row = parent[row];
+
+			if((row < src) || (col < src))
+				return false;
 		}
+
+		if((row < src) || (col < src))
+				return false;
 
 		while(row != col)
 		{
 			row = parent[row];
 			col = parent[col];
+
+			if((row < src) || (col < src))
+				return false;
 		}
 
 		if( row == src )
@@ -171,6 +189,31 @@ struct dijkstra
 		}
 
 		return (row == src);
+	}
+
+	bool is_edge_cycle_using_s_values(std::vector<unsigned> &s_values,unsigned &edge_offset,int &total_weight,unsigned src)
+	{
+		unsigned row,col;
+		total_weight = 0;
+
+		row = graph->rows->at(edge_offset);
+		col = graph->columns->at(edge_offset);
+
+		if(!(src <= row && src <= col))
+			return false;
+
+		if(s_values[row] != s_values[col])
+		{
+			total_weight += distance[row] + distance[col] + graph->weights->at(edge_offset);
+			return true;
+		}
+		else if((s_values[row] == s_values[col]) && (s_values[row] == src))
+		{
+			total_weight += distance[row] + distance[col] + graph->weights->at(edge_offset);
+			return true;
+		}
+		else
+			return false;
 	}
 
 	void assert_correctness(unsigned src)

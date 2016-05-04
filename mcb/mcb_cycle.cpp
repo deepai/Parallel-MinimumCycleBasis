@@ -15,6 +15,7 @@
 #include <cstring>
 #include <unordered_set>
 #include <unordered_map>
+#include <utility>
 
 #include "FileReader.h"
 #include "Files.h"
@@ -25,6 +26,9 @@
 #include "CsrGraphMulti.h"
 #include "bit_vector.h"
 #include "work_per_thread.h"
+#include "cycle_searcher.h"
+#include "isometric_cycle.h"
+#include "stats.h"
 
 debugger dbg;
 HostTimer globalTimer;
@@ -33,13 +37,16 @@ std::string InputFileName;
 std::string OutputFileDirectory;
 
 double totalTime = 0;
+double localTime = 0;
+
+stats info;
 
 int main(int argc,char* argv[])
 {
 	if(argc < 4)
 	{
 		printf("Ist Argument should indicate the InputFile\n");
-		printf("2nd Argument should indicate the outputdirectory\n");
+		printf("2nd Argument should indicate the OutputFile\n");
 		printf("3th argument should indicate the number of threads.(Optional) (1 default)\n");
 		exit(1);
 	}
@@ -69,6 +76,7 @@ int main(int argc,char* argv[])
 	csr_graph *graph=new csr_graph();
 
 	graph->Nodes = nodes;
+	graph->initial_edge_count = edges;
 	/*
 	 * ====================================================================================
 	 * Fill Edges.
@@ -84,101 +92,128 @@ int main(int argc,char* argv[])
 
 	Reader.fileClose();
 
-	std::vector<std::vector<unsigned> > *chains = new std::vector<std::vector<unsigned> >();
-
-	debug("Input File Reading Complete...\n");
-	debug("Generating Initial Spanning Tree and Ear Decomposition");
-
-	int source_vertex;
-
-	std::vector<unsigned> *remove_edge_list = graph->mark_degree_two_chains(&chains,source_vertex);
-	//initial_spanning_tree.populate_tree_edges(true,NULL,source_vertex);
-
-	std::vector<std::vector<unsigned> > *edges_new_list = new std::vector<std::vector<unsigned> >();
-
-	int nodes_removed = 0;
-
-	for(int i=0;i<chains->size();i++)
+	if(graph->get_num_degree_two_vertices() == graph->Nodes)
 	{
-		unsigned row,col;
-		unsigned total_weight = graph->sum_edge_weights(chains->at(i),row,col);
-
-		nodes_removed += chains->at(i).size() - 1;
-
-		std::vector<unsigned> new_edge = std::vector<unsigned>();
-		new_edge.push_back(row);
-		new_edge.push_back(col);
-		new_edge.push_back(total_weight);
-
-		edges_new_list->push_back(new_edge);
-		//debug(row+1,col+1,total_weight);
+		info.setNumFinalCycles(1);
+		info.setNumInitialCycles(1);
+		info.setTotalWeight(graph->get_total_weight());
+		info.print_stats(argv[2]);
+		
+		return 0;
 	}
 
-	debug ("Number of nodes removed = ",nodes_removed);
+	int source_vertex = 0;
 
 	csr_multi_graph *reduced_graph = csr_multi_graph::get_modified_graph(graph,
-									     remove_edge_list,
-									     edges_new_list,
-									     nodes_removed);
+									     NULL,
+									     NULL,
+									     0);
 
 	csr_tree *initial_spanning_tree = new csr_tree(reduced_graph);
 	initial_spanning_tree->populate_tree_edges(true,source_vertex);
 
 	int num_non_tree_edges = initial_spanning_tree->non_tree_edges->size();
 
-	std::unordered_map<unsigned,unsigned> *non_tree_edges_map = new std::unordered_map<unsigned,unsigned>();
+	assert(num_non_tree_edges == edges - nodes + 1);
+	assert(graph->get_total_weight() == reduced_graph->get_total_weight());
+
+	std::vector<std::pair<bool,int>> non_tree_edges_map(reduced_graph->rows->size());
 	
 	for(int i=0;i<initial_spanning_tree->non_tree_edges->size();i++)
-		non_tree_edges_map->insert(std::make_pair(initial_spanning_tree->non_tree_edges->at(i),i));
+	{
+		non_tree_edges_map[initial_spanning_tree->non_tree_edges->at(i)].first = true;
+		non_tree_edges_map[initial_spanning_tree->non_tree_edges->at(i)].second = i;
+	}
+
+	for(int i=0;i<reduced_graph->rows->size();i++)
+	{
+		//copy the edges into the reverse edges as well.
+		if(!non_tree_edges_map[i].first)
+		{
+			if(non_tree_edges_map[reduced_graph->reverse_edge->at(i)].first)
+			{
+				non_tree_edges_map[i].first = true;
+				non_tree_edges_map[i].second = non_tree_edges_map[reduced_graph->reverse_edge->at(i)].second;
+			}
+		}
+	}
+
+	cycle_storage *storage = new cycle_storage(reduced_graph->Nodes);
 
 	worker_thread **multi_work = new worker_thread*[num_threads];
+
 	for(int i=0;i<num_threads;i++)
-		multi_work[i] = new worker_thread(reduced_graph);
+		multi_work[i] = new worker_thread(reduced_graph,storage);
+
+	globalTimer.start_timer();
 
 	//produce shortest path trees across all the nodes.
-	#pragma omp parallel for 
+
+	int count_cycles = 0;
+
+	#pragma omp parallel for reduction(+:count_cycles)
 	for(int i = 0; i < reduced_graph->Nodes; ++i)
 	{
 		int threadId = omp_get_thread_num();
-		multi_work[threadId]->produce_sp_tree_and_cycles(i,reduced_graph);
+		count_cycles += multi_work[threadId]->produce_sp_tree_and_cycles(i,reduced_graph);
 	}
 
-	std::vector<cycle*> list_cycle;
+	for(int i=0;i<num_threads;i++)
+		storage->add_trees(multi_work[i]->shortest_path_trees);
 
-	//block
+	localTime = globalTimer.get_event_time();
+	totalTime += localTime;
+
+	info.setTimeConstructionTrees(localTime);
+
+	globalTimer.start_timer();
+
+	std::vector<cycle*> list_cycle_vec;
+	std::list<cycle*> list_cycle;
+
+	for(int j=0;j<storage->list_cycles.size();j++)
 	{
-		int space[num_threads] = {0};
-		for(int i=0;i<num_threads;i++)
-			space[i] = multi_work[i]->list_cycles.size();
-
-		int prev = 0;
-		for(int i=0;i<num_threads;i++)
+		for(std::unordered_map<unsigned long long,list_common_cycles*>::iterator it = storage->list_cycles[j].begin();
+			it != storage->list_cycles[j].end(); it++)
 		{
-			int temp = space[i];
-			space[i] = prev;
-			prev += temp;
+			for(int k=0;k<it->second->listed_cycles.size();k++)
+			{
+				list_cycle_vec.push_back(it->second->listed_cycles[k]);
+				list_cycle_vec.back()->ID = list_cycle_vec.size() - 1;
+			}
 		}
+	}
+	
 
-		//total number of cycles;
-		list_cycle.resize(prev);
+	sort(list_cycle_vec.begin(),list_cycle_vec.end(),cycle::compare());
 
-		#pragma omp parallel for
-		for(int i=0;i<num_threads;i++)
-		{
-			int threadId = omp_get_thread_num();
-			for(int j=0;j<multi_work[i]->list_cycles.size();j++)
-				list_cycle[space[i] + j] = multi_work[i]->list_cycles[j];
+	info.setNumInitialCycles(list_cycle_vec.size());
 
-			multi_work[i]->empty_cycles();
+	isometric_cycle *isometric_cycle_helper = new isometric_cycle(list_cycle_vec.size(),storage,&list_cycle_vec);
 
-		}
+	isometric_cycle_helper->obtain_isometric_cycles();
 
+	delete isometric_cycle_helper;
+
+	for(int i=0; i<list_cycle_vec.size(); i++)
+	{
+		if(list_cycle_vec[i] != NULL)
+			list_cycle.push_back(list_cycle_vec[i]);
 	}
 
-	std::sort(list_cycle.begin(),list_cycle.end(),cycle::compare());
+	info.setNumIsometricCycles(list_cycle.size());
+
+	list_cycle_vec.clear();
+
+
+	//assert(list_cycle.size() == count_cycles);
+
+	localTime = globalTimer.get_event_time();
+	totalTime += localTime;
+
+	info.setTimeCollectCycles(localTime);
 
 	//At this stage we have the shortest path trees and the cycles sorted in increasing order of length.
-
 
 	//generate the bit vectors
 	bit_vector **support_vectors = new bit_vector*[num_non_tree_edges];
@@ -190,54 +225,61 @@ int main(int argc,char* argv[])
 
 	std::vector<cycle*> final_mcb;
 
-	bool *used_cycle = new bool[list_cycle.size()];
-	memset(used_cycle,0,sizeof(bool)*list_cycle.size());
+	double precompute_time = 0;
+	double cycle_inspection_time = 0;
+	double independence_test_time = 0;
 
 	//Main Outer Loop of the Algorithm.
 	for(int e=0;e<num_non_tree_edges;e++)
 	{
+		globalTimer.start_timer();
+
 		#pragma omp parallel for
 		for(int i=0;i<num_threads;i++)
 		{
-			multi_work[i]->precompute_supportVec(*non_tree_edges_map,*support_vectors[e]);
+			multi_work[i]->precompute_supportVec(non_tree_edges_map,*support_vectors[e]);
 		}
-		for(int i=0;i<list_cycle.size();i++)
+
+		precompute_time += globalTimer.get_event_time();
+		globalTimer.start_timer();
+
+
+		for(std::list<cycle*>::iterator cycle = list_cycle.begin();
+			cycle != list_cycle.end(); cycle++)
 		{
-			if(used_cycle[i] == true)
-				continue;
 			
-			unsigned normal_edge = list_cycle[i]->non_tree_edge_index;
-			unsigned reverse_edge = reduced_graph->reverse_edge->at(normal_edge);
+			unsigned normal_edge = (*cycle)->non_tree_edge_index;
 			unsigned bit_val = 0;
 
 			unsigned row,col;
 			row = reduced_graph->rows->at(normal_edge);
 			col = reduced_graph->columns->at(normal_edge);
 
-			if(non_tree_edges_map->find(reverse_edge) != non_tree_edges_map->end())
+			std::pair<bool,int> &edge = non_tree_edges_map[normal_edge];
+
+			if(edge.first)
 			{
-				bit_val = support_vectors[e]->get_bit(non_tree_edges_map->at(reverse_edge));
-			}
-			else if(non_tree_edges_map->find(normal_edge) != non_tree_edges_map->end())
-			{
-				bit_val = support_vectors[e]->get_bit(non_tree_edges_map->at(normal_edge));
+				bit_val = support_vectors[e]->get_bit(edge.second);
 			}
 
-			bit_val = (bit_val + list_cycle[i]->tree->node_pre_compute->at(row))%2;
-			bit_val = (bit_val + list_cycle[i]->tree->node_pre_compute->at(col))%2;
+			bit_val = (bit_val + (*cycle)->tree->node_pre_compute->at(row))%2;
+			bit_val = (bit_val + (*cycle)->tree->node_pre_compute->at(col))%2;
 
 			if(bit_val == 1)
 			{
 
-				final_mcb.push_back(list_cycle[i]);
-				used_cycle[i] = true;
+				final_mcb.push_back(*cycle);
+				list_cycle.erase(cycle);
 				break;
 			}
 		}
 
-		bit_vector *cycle_vector = final_mcb.back()->get_cycle_vector(*non_tree_edges_map);
+		cycle_inspection_time += globalTimer.get_event_time();
+		globalTimer.start_timer();
 
-		#pragma omp parallel for 
+		bit_vector *cycle_vector = final_mcb.back()->get_cycle_vector(non_tree_edges_map,
+																	  initial_spanning_tree->non_tree_edges->size());
+
 		for(int j=e+1;j<num_non_tree_edges;j++)
 		{
 			unsigned product = cycle_vector->dot_product(support_vectors[j]);
@@ -245,12 +287,28 @@ int main(int argc,char* argv[])
 				support_vectors[j]->do_xor(support_vectors[e]);
 		}
 
+		independence_test_time += globalTimer.get_event_time();
+
 	}
+
+	list_cycle.clear();
+
+	info.setPrecomputeShortestPathTime(precompute_time);
+	info.setCycleInspectionTime(cycle_inspection_time);
+	info.setIndependenceTestTime(independence_test_time);
+	info.setTotalTime();
+
+	int total_weight = 0;
 
 	for(int i=0;i<final_mcb.size();i++)
 	{
-		final_mcb[i]->print();
+		total_weight +=  final_mcb[i]->total_length;
 	}
+
+	info.setNumFinalCycles(final_mcb.size());
+	info.setTotalWeight(total_weight);
+
+	info.print_stats(argv[2]);
 
 	return 0;
 }

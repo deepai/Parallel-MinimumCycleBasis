@@ -27,7 +27,8 @@ _EXTRA_DEPS = mmio.o \
 			  CsrGraphSpanningTree.o \
 			  CsrGraphDegreeTwoRemoval.o \
 			  CsrGraphMultiSpanningTree.o \
-			  FVS.o
+			  FVS.o \
+			  compressed_trees.o
 EXTRA_DEPS = $(patsubst %,$(EX_INCLUDE)/%,$(_EXTRA_DEPS))
 
 OBJ2 = mcb_cycle.o
@@ -46,8 +47,8 @@ Test: Test.o $(EXTRA_DEPS)
 Test.o: Test.cpp $(DEPS)
 	$(CC) -c -o $@ $< $(CFLAGS) $(DFLAGS)
 
-#$(include)/%.o: $(include)/%.cpp $(DEPS)
-	#$(CC) $(CFLAGS) $(LIBS) $(DFLAGS) -o $@ $< 
+$(include)/%.o: $(include)/%.cpp $(DEPS)
+	$(CC) $(CFLAGS) $(LIBS) $(DFLAGS) -o $@ $<
 .PHONY: clean
 
 clean:

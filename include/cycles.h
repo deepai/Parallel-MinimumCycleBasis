@@ -140,14 +140,14 @@ struct cycle
 		return vector;
 	}
 
-	void get_cycle_edges(std::vector<std::pair<int,int> > &cycle_edges)
+	void get_cycle_edges(std::vector<int> &cycle_edges)
 	{
 		unsigned row = trees->parent_graph->rows->at(non_tree_edge_index);
 		unsigned col = trees->parent_graph->columns->at(non_tree_edge_index);
 
 		unsigned prev_row, prev_col;
 
-		cycle_edges.push_back({row,col});
+		cycle_edges.push_back(non_tree_edge_index);
 
 		unsigned *node_rowoffsets,*node_columns,edge_offset;
 		int *node_edgeoffsets,*node_parents,*node_distance;
@@ -168,7 +168,7 @@ struct cycle
 			else
 				row = trees->parent_graph->columns->at(edge_offset);
 
-			cycle_edges.push_back({row, prev_row});
+			cycle_edges.push_back(edge_offset);
 
 			prev_row = row;
 
@@ -187,7 +187,7 @@ struct cycle
 			else
 				col = trees->parent_graph->columns->at(edge_offset);
 
-			cycle_edges.push_back({col, prev_col});
+			cycle_edges.push_back(edge_offset);
 
 			prev_col = col;
 

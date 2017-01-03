@@ -286,6 +286,15 @@ public:
 
 		return new_reduced_graph;
 	}
+
+	//This method implicitely changes the values in the array itself.
+	void get_edges_original_graph(std::vector<int> &input_edges)
+	{
+		for(int i=0; i < rows->size(); i++)
+		{
+			input_edges[i] = edge_original_graph->at(input_edges[i]);
+		}
+	}
 };
 
 #endif

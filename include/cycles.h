@@ -140,6 +140,61 @@ struct cycle
 		return vector;
 	}
 
+	void get_cycle_edges(std::vector<std::pair<int,int> > &cycle_edges)
+	{
+		unsigned row = trees->parent_graph->rows->at(non_tree_edge_index);
+		unsigned col = trees->parent_graph->columns->at(non_tree_edge_index);
+
+		unsigned prev_row, prev_col;
+
+		cycle_edges.push_back({row,col});
+
+		unsigned *node_rowoffsets,*node_columns,edge_offset;
+		int *node_edgeoffsets,*node_parents,*node_distance;
+
+		int src_index = trees->get_index(root);
+
+		trees->get_node_arrays(&node_rowoffsets,&node_columns,&node_edgeoffsets,&node_parents,&node_distance,src_index);
+
+		prev_row = row;
+
+		//check for vertices row =====> root.
+		while(node_parents[row] != -1)
+		{
+			edge_offset = node_parents[row];
+
+			if(trees->parent_graph->rows->at(edge_offset) != row)
+				row = trees->parent_graph->rows->at(edge_offset);
+			else
+				row = trees->parent_graph->columns->at(edge_offset);
+
+			cycle_edges.push_back({row, prev_row});
+
+			prev_row = row;
+
+			assert(row != -1);
+		}
+
+		prev_col = col;
+
+		//check for vertices col =====> root.
+		while(node_parents[col] != -1)
+		{
+			edge_offset = node_parents[col];
+
+			if(trees->parent_graph->rows->at(edge_offset) != col)
+				col = trees->parent_graph->rows->at(edge_offset);
+			else
+				col = trees->parent_graph->columns->at(edge_offset);
+
+			cycle_edges.push_back({col, prev_col});
+
+			prev_col = col;
+
+			assert(col != -1);
+		}
+	}
+
 	void print()
 	{
 		printf("=================================================================================\n");
